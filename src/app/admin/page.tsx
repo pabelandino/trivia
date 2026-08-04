@@ -66,6 +66,8 @@ export default function AdminDashboardPage() {
   const loadDashboard = useCallback(async () => {
     const stored = getAdminSessions();
     setSessions(stored);
+    setLoading(true);
+    setError(null);
 
     if (stored.length === 0) {
       setGames([]);
@@ -74,14 +76,14 @@ export default function AdminDashboardPage() {
     }
 
     try {
-      const games = await fetchDashboardGames(
+      const nextGames = await fetchDashboardGames(
         stored.map((session) => ({
           gameId: session.gameId,
           adminSecret: session.adminSecret,
         }))
       );
 
-      setGames(games);
+      setGames(nextGames);
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -94,8 +96,47 @@ export default function AdminDashboardPage() {
   }, []);
 
   useEffect(() => {
-    void loadDashboard();
-  }, [loadDashboard]);
+    let cancelled = false;
+    const stored = getAdminSessions();
+
+    void (async () => {
+      if (cancelled) return;
+      setSessions(stored);
+
+      if (stored.length === 0) {
+        setGames([]);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const nextGames = await fetchDashboardGames(
+          stored.map((session) => ({
+            gameId: session.gameId,
+            adminSecret: session.adminSecret,
+          }))
+        );
+
+        if (cancelled) return;
+        setGames(nextGames);
+      } catch (loadError) {
+        if (cancelled) return;
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "No se pudo cargar el dashboard"
+        );
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function getSecret(gameId: string) {
     return sessions.find((session) => session.gameId === gameId)?.adminSecret ?? "";

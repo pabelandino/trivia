@@ -36,8 +36,9 @@ export function buildLeaderboard(participants: Participant[]): LeaderboardEntry[
     }));
 }
 
-export function sanitizeGame(game: Game) {
-  const { admin_secret: _adminSecret, ...publicGame } = game;
+export function sanitizeGame(game: Game): Omit<Game, "admin_secret"> {
+  const { admin_secret, ...publicGame } = game;
+  void admin_secret;
   return publicGame;
 }
 

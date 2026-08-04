@@ -8,30 +8,89 @@ import {
 } from "@/lib/game-service";
 import type { PublicGameState } from "@/lib/types";
 
+type FetchSnapshot = {
+  sourceKey: string;
+  state: PublicGameState | null;
+  error: string | null;
+  ready: boolean;
+};
+
+const emptySnapshot: FetchSnapshot = {
+  sourceKey: "",
+  state: null,
+  error: null,
+  ready: false,
+};
+
+async function loadGameByCode(code: string) {
+  if (!code) {
+    return { state: null as PublicGameState | null, error: null as string | null };
+  }
+
+  try {
+    const data = await fetchGameStateByCode(code);
+    return { state: data, error: null };
+  } catch (fetchError) {
+    return {
+      state: null,
+      error:
+        fetchError instanceof Error ? fetchError.message : "Could not load game",
+    };
+  }
+}
+
+async function loadGameById(gameId: string) {
+  try {
+    const data = await fetchGameStateById(gameId);
+    return { state: data, error: null };
+  } catch (fetchError) {
+    return {
+      state: null,
+      error:
+        fetchError instanceof Error ? fetchError.message : "Could not load game",
+    };
+  }
+}
+
+function isCurrentSnapshot(snapshot: FetchSnapshot, sourceKey: string) {
+  return snapshot.sourceKey === sourceKey && snapshot.ready;
+}
+
 export function useGameByCode(code: string) {
-  const [state, setState] = useState<PublicGameState | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [snapshot, setSnapshot] = useState<FetchSnapshot>(emptySnapshot);
+
+  const loading = Boolean(code) && !isCurrentSnapshot(snapshot, code);
 
   const refresh = useCallback(async () => {
-    if (!code) return;
-
-    try {
-      const data = await fetchGameStateByCode(code);
-      setState(data);
-      setError(null);
-    } catch (fetchError) {
-      setError(
-        fetchError instanceof Error ? fetchError.message : "Could not load game"
-      );
-    } finally {
-      setLoading(false);
-    }
+    const result = await loadGameByCode(code);
+    setSnapshot({
+      sourceKey: code,
+      state: result.state,
+      error: result.error,
+      ready: true,
+    });
   }, [code]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    let cancelled = false;
+
+    void loadGameByCode(code).then((result) => {
+      if (cancelled) return;
+      setSnapshot({
+        sourceKey: code,
+        state: result.state,
+        error: result.error,
+        ready: true,
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  const state = isCurrentSnapshot(snapshot, code) ? snapshot.state : null;
+  const error = isCurrentSnapshot(snapshot, code) ? snapshot.error : null;
 
   useEffect(() => {
     if (!state?.game.id) return;
@@ -65,29 +124,45 @@ export function useGameByCode(code: string) {
 }
 
 export function useGameById(gameId: string, enabled = true) {
-  const [state, setState] = useState<PublicGameState | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [snapshot, setSnapshot] = useState<FetchSnapshot>(emptySnapshot);
+  const sourceKey = enabled && gameId ? gameId : "";
+
+  const loading = Boolean(sourceKey) && !isCurrentSnapshot(snapshot, sourceKey);
 
   const refresh = useCallback(async () => {
     if (!enabled || !gameId) return;
 
-    try {
-      const data = await fetchGameStateById(gameId);
-      setState(data);
-      setError(null);
-    } catch (fetchError) {
-      setError(
-        fetchError instanceof Error ? fetchError.message : "Could not load game"
-      );
-    } finally {
-      setLoading(false);
-    }
+    const result = await loadGameById(gameId);
+    setSnapshot({
+      sourceKey: gameId,
+      state: result.state,
+      error: result.error,
+      ready: true,
+    });
   }, [enabled, gameId]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (!enabled || !gameId) return;
+
+    let cancelled = false;
+
+    void loadGameById(gameId).then((result) => {
+      if (cancelled) return;
+      setSnapshot({
+        sourceKey: gameId,
+        state: result.state,
+        error: result.error,
+        ready: true,
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, gameId]);
+
+  const state = isCurrentSnapshot(snapshot, sourceKey) ? snapshot.state : null;
+  const error = isCurrentSnapshot(snapshot, sourceKey) ? snapshot.error : null;
 
   useEffect(() => {
     if (!enabled || !gameId) return;

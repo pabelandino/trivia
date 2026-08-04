@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { AnswerOptions } from "@/components/AnswerOptions";
 import { CountdownTimer } from "@/components/CountdownTimer";
 import { Leaderboard } from "@/components/Leaderboard";
@@ -47,10 +47,14 @@ function AdminManageContent() {
   const [message, setMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editTimer, setEditTimer] = useState(30);
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
+  const [timerDraft, setTimerDraft] = useState<number | null>(null);
 
   const { state, loading, error, refresh } = useGameById(gameId, Boolean(gameId));
+
+  const editTitle = titleDraft ?? state?.game.title ?? "";
+  const editTimer = timerDraft ?? state?.game.default_timer_seconds ?? 30;
+  const shareUrl = state?.game.code ? getShareUrl(state.game.code) : "";
 
   useEffect(() => {
     if (!state || !adminSecret) return;
@@ -61,14 +65,7 @@ function AdminManageContent() {
       code: state.game.code,
       title: state.game.title,
     });
-    setEditTitle(state.game.title);
-    setEditTimer(state.game.default_timer_seconds);
-  }, [adminSecret, state?.game.id, state?.game.code, state?.game.title, state?.game.default_timer_seconds]);
-
-  const shareUrl = useMemo(() => {
-    if (!state?.game.code) return "";
-    return getShareUrl(state.game.code);
-  }, [state?.game.code]);
+  }, [adminSecret, state]);
 
   const currentQuestion = state?.currentQuestion ?? null;
   const timerSeconds = state
@@ -135,6 +132,8 @@ function AdminManageContent() {
       await updateGameSettings(gameId, adminSecret, editTitle, editTimer);
 
       updateAdminSessionTitle(gameId, editTitle);
+      setTitleDraft(null);
+      setTimerDraft(null);
       await refresh();
       setMessage("Cambios guardados");
     } catch (saveError) {
@@ -271,7 +270,7 @@ function AdminManageContent() {
           <h2 className="text-xl font-extrabold">Configuración</h2>
           <input
             value={editTitle}
-            onChange={(event) => setEditTitle(event.target.value)}
+            onChange={(event) => setTitleDraft(event.target.value)}
             className="w-full rounded-2xl border-0 bg-white px-4 py-3 font-semibold text-indigo-950 outline-none"
           />
           <input
@@ -279,7 +278,7 @@ function AdminManageContent() {
             min={10}
             max={120}
             value={editTimer}
-            onChange={(event) => setEditTimer(Number(event.target.value))}
+            onChange={(event) => setTimerDraft(Number(event.target.value))}
             className="w-full rounded-2xl border-0 bg-white px-4 py-3 font-semibold text-indigo-950 outline-none"
           />
           <SecondaryButton onClick={saveGameSettings} disabled={actionLoading}>

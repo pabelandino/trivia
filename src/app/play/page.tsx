@@ -47,17 +47,20 @@ function PlayPageContent() {
   const code = (searchParams.get("code") ?? "").toUpperCase();
 
   const [displayName, setDisplayName] = useState("");
-  const [session, setSession] = useState<ReturnType<typeof getStoredSession>>(null);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [myAnswer, setMyAnswer] = useState<Answer | null>(null);
+  const [joinedSession, setJoinedSession] = useState<ReturnType<typeof getStoredSession>>(null);
+  const [pendingSelection, setPendingSelection] = useState<{
+    questionId: string;
+    index: number;
+  } | null>(null);
+  const [submittedAnswer, setSubmittedAnswer] = useState<Answer | null>(null);
   const [joinLoading, setJoinLoading] = useState(false);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitLockRef = useRef(false);
 
-  useEffect(() => {
-    if (code) setSession(getStoredSession(code));
-  }, [code]);
+  const storedSession =
+    code && typeof window !== "undefined" ? getStoredSession(code) : null;
+  const session = joinedSession ?? storedSession;
 
   const { state, loading, error: loadError, refresh } = useGameByCode(code);
 
@@ -90,22 +93,25 @@ function PlayPageContent() {
       })
     : 30;
 
-  useEffect(() => {
-    if (!state || !session || !currentQuestion) {
-      setMyAnswer(null);
-      setSelectedIndex(null);
-      submitLockRef.current = false;
-      return;
-    }
+  const serverAnswer = useMemo(() => {
+    if (!state || !session || !currentQuestion) return null;
 
-    const existing = state.answersForCurrentQuestion.find(
-      (answer) => answer.participant_id === session.participantId
+    return (
+      state.answersForCurrentQuestion.find(
+        (answer) => answer.participant_id === session.participantId
+      ) ?? null
     );
+  }, [currentQuestion, session, state]);
 
-    setMyAnswer(existing ?? null);
-    setSelectedIndex(existing?.selected_index ?? null);
-    submitLockRef.current = Boolean(existing);
-  }, [currentQuestion?.id, session, state]);
+  const myAnswer =
+    (submittedAnswer?.question_id === currentQuestion?.id
+      ? submittedAnswer
+      : null) ?? serverAnswer;
+  const selectedIndex =
+    myAnswer?.selected_index ??
+    (pendingSelection && pendingSelection.questionId === currentQuestion?.id
+      ? pendingSelection.index
+      : null);
 
   useEffect(() => {
     if (!state) return;
@@ -143,7 +149,7 @@ function PlayPageContent() {
       };
 
       storeSession(code, nextSession);
-      setSession(nextSession);
+      setJoinedSession(nextSession);
       await refresh();
     } catch (joinError) {
       setError(
@@ -172,7 +178,7 @@ function PlayPageContent() {
         selectedIndex
       );
 
-      setMyAnswer(data.answer as Answer);
+      setSubmittedAnswer(data.answer as Answer);
       await refresh();
     } catch (submitError) {
       submitLockRef.current = false;
@@ -290,7 +296,10 @@ function PlayPageContent() {
             options={currentQuestion.options}
             selectedIndex={selectedIndex}
             disabled={Boolean(myAnswer) || submitLoading}
-            onSelect={setSelectedIndex}
+            onSelect={(index) => {
+              if (!currentQuestion) return;
+              setPendingSelection({ questionId: currentQuestion.id, index });
+            }}
           />
 
           {!myAnswer ? (
