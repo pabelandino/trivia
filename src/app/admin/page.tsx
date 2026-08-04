@@ -17,6 +17,12 @@ import {
   type AdminSession,
 } from "@/lib/admin-storage";
 import type { GamePhase } from "@/lib/types";
+import {
+  createGame as createGameRpc,
+  deleteGame as deleteGameRpc,
+  fetchDashboardGames,
+  gameControl,
+} from "@/lib/game-service";
 
 interface DashboardGame {
   id: string;
@@ -68,23 +74,14 @@ export default function AdminDashboardPage() {
     }
 
     try {
-      const response = await fetch("/api/games/dashboard", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          items: stored.map((session) => ({
-            gameId: session.gameId,
-            adminSecret: session.adminSecret,
-          })),
-        }),
-      });
+      const games = await fetchDashboardGames(
+        stored.map((session) => ({
+          gameId: session.gameId,
+          adminSecret: session.adminSecret,
+        }))
+      );
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo cargar el dashboard");
-      }
-
-      setGames(data.games ?? []);
+      setGames(games);
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -107,7 +104,9 @@ export default function AdminDashboardPage() {
   function openGame(gameId: string) {
     const secret = getSecret(gameId);
     if (!secret) return;
-    router.push(`/admin/${gameId}?secret=${encodeURIComponent(secret)}`);
+    router.push(
+      `/admin/manage?gameId=${encodeURIComponent(gameId)}&secret=${encodeURIComponent(secret)}`
+    );
   }
 
   async function createGame() {
@@ -115,19 +114,7 @@ export default function AdminDashboardPage() {
     setError(null);
 
     try {
-      const response = await fetch("/api/games", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          default_timer_seconds: timer,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo crear la trivia");
-      }
+      const data = await createGameRpc(title, timer);
 
       saveAdminSession({
         gameId: data.game.id,
@@ -137,7 +124,7 @@ export default function AdminDashboardPage() {
       });
 
       router.push(
-        `/admin/${data.game.id}?secret=${encodeURIComponent(data.adminSecret)}`
+        `/admin/manage?gameId=${encodeURIComponent(data.game.id)}&secret=${encodeURIComponent(data.adminSecret)}`
       );
     } catch (createError) {
       setError(
@@ -161,17 +148,7 @@ export default function AdminDashboardPage() {
     setError(null);
 
     try {
-      const response = await fetch(`/api/games/${gameId}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ admin_secret: secret }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo eliminar");
-      }
-
+      await deleteGameRpc(gameId, secret);
       removeAdminSession(gameId);
       await loadDashboard();
     } catch (deleteError) {
@@ -193,17 +170,7 @@ export default function AdminDashboardPage() {
     setError(null);
 
     try {
-      const response = await fetch(`/api/games/${gameId}/control`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ admin_secret: secret, action: "restart" }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo reiniciar");
-      }
-
+      await gameControl(gameId, secret, "restart");
       openGame(gameId);
     } catch (restartError) {
       setError(
@@ -318,7 +285,7 @@ export default function AdminDashboardPage() {
                     </button>
                   ) : (
                     <Link
-                      href={`/play/${game.code}`}
+                      href={`/play?code=${game.code}`}
                       className="rounded-full border border-white/30 px-4 py-2 text-center text-sm font-bold text-white"
                     >
                       Ver link

@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import {
+  fetchGameStateByCode,
+  fetchGameStateById,
+} from "@/lib/game-service";
 import type { PublicGameState } from "@/lib/types";
 
 export function useGameByCode(code: string) {
@@ -10,14 +14,10 @@ export function useGameByCode(code: string) {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    if (!code) return;
+
     try {
-      const response = await fetch(`/api/games?code=${encodeURIComponent(code)}`);
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error ?? "Could not load game");
-      }
-
+      const data = await fetchGameStateByCode(code);
       setState(data);
       setError(null);
     } catch (fetchError) {
@@ -73,13 +73,7 @@ export function useGameById(gameId: string, enabled = true) {
     if (!enabled || !gameId) return;
 
     try {
-      const response = await fetch(`/api/games/${gameId}`);
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error ?? "Could not load game");
-      }
-
+      const data = await fetchGameStateById(gameId);
       setState(data);
       setError(null);
     } catch (fetchError) {

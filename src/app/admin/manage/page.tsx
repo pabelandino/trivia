@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { AnswerOptions } from "@/components/AnswerOptions";
 import { CountdownTimer } from "@/components/CountdownTimer";
 import { Leaderboard } from "@/components/Leaderboard";
@@ -19,12 +19,17 @@ import {
   getQuestionTimerSeconds,
   isParticipantOnline,
 } from "@/lib/game-utils";
+import {
+  addQuestion,
+  deleteQuestion as deleteQuestionRpc,
+  gameControl,
+  getShareUrl,
+  updateGameSettings,
+  updateQuestion,
+} from "@/lib/game-service";
+
 import { getWinners } from "@/lib/winner-utils";
 import type { CreateQuestionInput, Question } from "@/lib/types";
-
-interface AdminGamePageProps {
-  params: Promise<{ gameId: string }>;
-}
 
 const emptyQuestion: CreateQuestionInput = {
   question_text: "",
@@ -32,11 +37,11 @@ const emptyQuestion: CreateQuestionInput = {
   correct_index: 0,
 };
 
-export default function AdminGamePage({ params }: AdminGamePageProps) {
+function AdminManageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [gameId, setGameId] = useState("");
-  const [adminSecret, setAdminSecret] = useState("");
+  const gameId = searchParams.get("gameId") ?? "";
+  const adminSecret = searchParams.get("secret") ?? "";
   const [draft, setDraft] = useState<CreateQuestionInput>(emptyQuestion);
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -44,12 +49,6 @@ export default function AdminGamePage({ params }: AdminGamePageProps) {
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editTimer, setEditTimer] = useState(30);
-
-  useEffect(() => {
-    params.then(({ gameId: id }) => setGameId(id));
-    const secret = searchParams.get("secret");
-    if (secret) setAdminSecret(secret);
-  }, [params, searchParams]);
 
   const { state, loading, error, refresh } = useGameById(gameId, Boolean(gameId));
 
@@ -67,8 +66,8 @@ export default function AdminGamePage({ params }: AdminGamePageProps) {
   }, [adminSecret, state?.game.id, state?.game.code, state?.game.title, state?.game.default_timer_seconds]);
 
   const shareUrl = useMemo(() => {
-    if (!state?.game.code || typeof window === "undefined") return "";
-    return `${window.location.origin}/play/${state.game.code}`;
+    if (!state?.game.code) return "";
+    return getShareUrl(state.game.code);
   }, [state?.game.code]);
 
   const currentQuestion = state?.currentQuestion ?? null;
@@ -87,17 +86,7 @@ export default function AdminGamePage({ params }: AdminGamePageProps) {
       setMessage(null);
 
       try {
-        const response = await fetch(`/api/games/${gameId}/control`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ admin_secret: adminSecret, action }),
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error ?? "No se pudo ejecutar la acción");
-        }
+        const data = await gameControl(gameId, adminSecret, action);
 
         await refresh();
 
@@ -143,20 +132,7 @@ export default function AdminGamePage({ params }: AdminGamePageProps) {
     setMessage(null);
 
     try {
-      const response = await fetch(`/api/games/${gameId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          admin_secret: adminSecret,
-          title: editTitle,
-          default_timer_seconds: editTimer,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo guardar");
-      }
+      await updateGameSettings(gameId, adminSecret, editTitle, editTimer);
 
       updateAdminSessionTitle(gameId, editTitle);
       await refresh();
@@ -176,20 +152,7 @@ export default function AdminGamePage({ params }: AdminGamePageProps) {
 
     setActionLoading(true);
     try {
-      const response = await fetch(
-        `/api/games/${gameId}/questions/${questionId}`,
-        {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ admin_secret: adminSecret }),
-        }
-      );
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo eliminar la pregunta");
-      }
-
+      await deleteQuestionRpc(gameId, questionId, adminSecret);
       if (editingQuestionId === questionId) {
         setEditingQuestionId(null);
         setDraft(emptyQuestion);
@@ -225,23 +188,10 @@ export default function AdminGamePage({ params }: AdminGamePageProps) {
     setMessage(null);
 
     try {
-      const url = editingQuestionId
-        ? `/api/games/${gameId}/questions/${editingQuestionId}`
-        : `/api/games/${gameId}`;
-      const method = editingQuestionId ? "PATCH" : "POST";
-
-      const response = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          admin_secret: adminSecret,
-          question: draft,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo guardar la pregunta");
+      if (editingQuestionId) {
+        await updateQuestion(gameId, editingQuestionId, adminSecret, draft);
+      } else {
+        await addQuestion(gameId, adminSecret, draft);
       }
 
       setDraft(emptyQuestion);
@@ -591,5 +541,19 @@ export default function AdminGamePage({ params }: AdminGamePageProps) {
         </Card>
       ) : null}
     </AppShell>
+  );
+}
+
+export default function AdminManagePage() {
+  return (
+    <Suspense
+      fallback={
+        <AppShell>
+          <Card>Cargando trivia...</Card>
+        </AppShell>
+      }
+    >
+      <AdminManageContent />
+    </Suspense>
   );
 }

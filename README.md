@@ -33,6 +33,21 @@ Or with the Supabase CLI:
 supabase db push
 ```
 
+## GitHub Pages (free hosting)
+
+1. Push this repo to GitHub
+2. Add repository secrets (Settings → Secrets and variables → Actions):
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+3. Enable Pages: **Settings → Pages → Build and deployment → Source: GitHub Actions**
+4. On push to `main`, the workflow `Deploy GitHub Pages` builds and publishes the site
+
+Live URL: `https://pabelandino.github.io/trivia/`
+
+Apply Supabase RPC migration for client-side hosting:
+
+`supabase/migrations/20250804190000_game_rpc.sql`
+
 ## GitHub Actions secrets
 
 Configure these repository secrets for CI and deploy:

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { AnswerOptions } from "@/components/AnswerOptions";
 import { CountdownTimer } from "@/components/CountdownTimer";
 import { Leaderboard } from "@/components/Leaderboard";
@@ -12,13 +13,14 @@ import {
   PrimaryButton,
 } from "@/components/ui";
 import { useGameByCode } from "@/hooks/useGameRealtime";
+import {
+  joinParticipant,
+  participantHeartbeat,
+  submitAnswer as submitAnswerRpc,
+} from "@/lib/game-service";
 import { getQuestionTimerSeconds } from "@/lib/game-utils";
 import { getWinners } from "@/lib/winner-utils";
 import type { Answer, Participant } from "@/lib/types";
-
-interface PlayPageProps {
-  params: Promise<{ code: string }>;
-}
 
 const SESSION_PREFIX = "trivia_player_";
 
@@ -40,8 +42,10 @@ function storeSession(
   localStorage.setItem(`${SESSION_PREFIX}${code}`, JSON.stringify(data));
 }
 
-export default function PlayPage({ params }: PlayPageProps) {
-  const [code, setCode] = useState("");
+function PlayPageContent() {
+  const searchParams = useSearchParams();
+  const code = (searchParams.get("code") ?? "").toUpperCase();
+
   const [displayName, setDisplayName] = useState("");
   const [session, setSession] = useState<ReturnType<typeof getStoredSession>>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -52,12 +56,8 @@ export default function PlayPage({ params }: PlayPageProps) {
   const submitLockRef = useRef(false);
 
   useEffect(() => {
-    params.then(({ code: gameCode }) => {
-      const normalized = gameCode.toUpperCase();
-      setCode(normalized);
-      setSession(getStoredSession(normalized));
-    });
-  }, [params]);
+    if (code) setSession(getStoredSession(code));
+  }, [code]);
 
   const { state, loading, error: loadError, refresh } = useGameByCode(code);
 
@@ -104,12 +104,7 @@ export default function PlayPage({ params }: PlayPageProps) {
 
     setMyAnswer(existing ?? null);
     setSelectedIndex(existing?.selected_index ?? null);
-
-    if (existing) {
-      submitLockRef.current = true;
-    } else {
-      submitLockRef.current = false;
-    }
+    submitLockRef.current = Boolean(existing);
   }, [currentQuestion?.id, session, state]);
 
   useEffect(() => {
@@ -122,15 +117,12 @@ export default function PlayPage({ params }: PlayPageProps) {
   useEffect(() => {
     if (!state?.game.id || !session) return;
 
-    const interval = window.setInterval(async () => {
-      await fetch(`/api/games/${state.game.id}/participants`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          participant_id: session.participantId,
-          session_token: session.sessionToken,
-        }),
-      });
+    const interval = window.setInterval(() => {
+      void participantHeartbeat(
+        state.game.id,
+        session.participantId,
+        session.sessionToken
+      );
     }, 10_000);
 
     return () => window.clearInterval(interval);
@@ -143,18 +135,7 @@ export default function PlayPage({ params }: PlayPageProps) {
     setError(null);
 
     try {
-      const response = await fetch(`/api/games/${state.game.id}/participants`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ display_name: displayName }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo unir a la trivia");
-      }
-
+      const data = await joinParticipant(state.game.id, displayName);
       const nextSession = {
         participantId: data.participant.id,
         sessionToken: data.sessionToken,
@@ -184,23 +165,14 @@ export default function PlayPage({ params }: PlayPageProps) {
     setError(null);
 
     try {
-      const response = await fetch(`/api/games/${state.game.id}/answers`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          participant_id: session.participantId,
-          session_token: session.sessionToken,
-          selected_index: selectedIndex,
-        }),
-      });
+      const data = await submitAnswerRpc(
+        state.game.id,
+        session.participantId,
+        session.sessionToken,
+        selectedIndex
+      );
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo enviar la respuesta");
-      }
-
-      setMyAnswer(data.answer);
+      setMyAnswer(data.answer as Answer);
       await refresh();
     } catch (submitError) {
       submitLockRef.current = false;
@@ -212,6 +184,14 @@ export default function PlayPage({ params }: PlayPageProps) {
     } finally {
       setSubmitLoading(false);
     }
+  }
+
+  if (!code) {
+    return (
+      <AppShell>
+        <Card>Falta el código de la trivia en el link.</Card>
+      </AppShell>
+    );
   }
 
   if (loading) {
@@ -372,5 +352,19 @@ export default function PlayPage({ params }: PlayPageProps) {
         </Card>
       ) : null}
     </AppShell>
+  );
+}
+
+export default function PlayPage() {
+  return (
+    <Suspense
+      fallback={
+        <AppShell>
+          <Card>Cargando...</Card>
+        </AppShell>
+      }
+    >
+      <PlayPageContent />
+    </Suspense>
   );
 }
