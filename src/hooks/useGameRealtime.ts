@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   fetchGameStateByCode,
@@ -56,13 +56,46 @@ function isCurrentSnapshot(snapshot: FetchSnapshot, sourceKey: string) {
   return snapshot.sourceKey === sourceKey && snapshot.ready;
 }
 
+function useDebouncedCallback(callback: () => void, delayMs: number) {
+  const timeoutRef = useRef<number | null>(null);
+  const callbackRef = useRef(callback);
+
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  return useCallback(() => {
+    if (timeoutRef.current !== null) {
+      window.clearTimeout(timeoutRef.current);
+    }
+
+    timeoutRef.current = window.setTimeout(() => {
+      timeoutRef.current = null;
+      callbackRef.current();
+    }, delayMs);
+  }, [delayMs]);
+}
+
 export function useGameByCode(code: string) {
   const [snapshot, setSnapshot] = useState<FetchSnapshot>(emptySnapshot);
+  const fetchGenerationRef = useRef(0);
 
   const loading = Boolean(code) && !isCurrentSnapshot(snapshot, code);
 
   const refresh = useCallback(async () => {
+    const generation = ++fetchGenerationRef.current;
     const result = await loadGameByCode(code);
+
+    if (generation !== fetchGenerationRef.current) return;
+
     setSnapshot({
       sourceKey: code,
       state: result.state,
@@ -71,11 +104,16 @@ export function useGameByCode(code: string) {
     });
   }, [code]);
 
+  const debouncedRefresh = useDebouncedCallback(() => {
+    void refresh();
+  }, 250);
+
   useEffect(() => {
     let cancelled = false;
+    const generation = ++fetchGenerationRef.current;
 
     void loadGameByCode(code).then((result) => {
-      if (cancelled) return;
+      if (cancelled || generation !== fetchGenerationRef.current) return;
       setSnapshot({
         sourceKey: code,
         state: result.state,
@@ -101,30 +139,31 @@ export function useGameByCode(code: string) {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "games", filter: `id=eq.${state.game.id}` },
-        () => refresh()
+        () => debouncedRefresh()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "participants", filter: `game_id=eq.${state.game.id}` },
-        () => refresh()
+        () => debouncedRefresh()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "answers" },
-        () => refresh()
+        () => debouncedRefresh()
       )
       .subscribe();
 
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [state?.game.id, refresh]);
+  }, [debouncedRefresh, state?.game.id]);
 
   return { state, loading, error, refresh };
 }
 
 export function useGameById(gameId: string, enabled = true) {
   const [snapshot, setSnapshot] = useState<FetchSnapshot>(emptySnapshot);
+  const fetchGenerationRef = useRef(0);
   const sourceKey = enabled && gameId ? gameId : "";
 
   const loading = Boolean(sourceKey) && !isCurrentSnapshot(snapshot, sourceKey);
@@ -132,7 +171,11 @@ export function useGameById(gameId: string, enabled = true) {
   const refresh = useCallback(async () => {
     if (!enabled || !gameId) return;
 
+    const generation = ++fetchGenerationRef.current;
     const result = await loadGameById(gameId);
+
+    if (generation !== fetchGenerationRef.current) return;
+
     setSnapshot({
       sourceKey: gameId,
       state: result.state,
@@ -141,13 +184,18 @@ export function useGameById(gameId: string, enabled = true) {
     });
   }, [enabled, gameId]);
 
+  const debouncedRefresh = useDebouncedCallback(() => {
+    void refresh();
+  }, 250);
+
   useEffect(() => {
     if (!enabled || !gameId) return;
 
     let cancelled = false;
+    const generation = ++fetchGenerationRef.current;
 
     void loadGameById(gameId).then((result) => {
-      if (cancelled) return;
+      if (cancelled || generation !== fetchGenerationRef.current) return;
       setSnapshot({
         sourceKey: gameId,
         state: result.state,
@@ -173,24 +221,24 @@ export function useGameById(gameId: string, enabled = true) {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "games", filter: `id=eq.${gameId}` },
-        () => refresh()
+        () => debouncedRefresh()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "participants", filter: `game_id=eq.${gameId}` },
-        () => refresh()
+        () => debouncedRefresh()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "answers" },
-        () => refresh()
+        () => debouncedRefresh()
       )
       .subscribe();
 
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [enabled, gameId, refresh]);
+  }, [debouncedRefresh, enabled, gameId]);
 
   return { state, loading, error, refresh };
 }

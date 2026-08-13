@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { AppShell, Card, LogoTitle, PrimaryButton } from "@/components/ui";
 import { verifySiteAdmin, changeSiteAdminCode } from "@/lib/game-service";
 import {
   clearSiteAdminCode,
-  getSiteAdminCode,
+  hasSiteAdminCode,
   setSiteAdminCode,
+  subscribeSiteAdminCode,
 } from "@/lib/site-admin-storage";
 
 interface AdminAccessGateProps {
@@ -14,21 +15,36 @@ interface AdminAccessGateProps {
 }
 
 export function AdminAccessGate({ children }: AdminAccessGateProps) {
-  const [unlocked, setUnlocked] = useState(() => Boolean(getSiteAdminCode()));
+  const unlocked = useSyncExternalStore(
+    subscribeSiteAdminCode,
+    hasSiteAdminCode,
+    () => false
+  );
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const enterDisabled = loading;
+
   async function handleUnlock() {
+    const trimmedCode = code.trim();
+
+    if (trimmedCode.length < 4) {
+      setError("El código debe tener al menos 4 caracteres");
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
     try {
-      await verifySiteAdmin(code.trim());
-      setSiteAdminCode(code.trim());
-      setUnlocked(true);
-    } catch {
-      setError("Código incorrecto");
+      await verifySiteAdmin(trimmedCode);
+      setSiteAdminCode(trimmedCode);
+      setCode("");
+    } catch (unlockError) {
+      setError(
+        unlockError instanceof Error ? unlockError.message : "Código incorrecto"
+      );
     } finally {
       setLoading(false);
     }
@@ -36,8 +52,8 @@ export function AdminAccessGate({ children }: AdminAccessGateProps) {
 
   function handleLogout() {
     clearSiteAdminCode();
-    setUnlocked(false);
     setCode("");
+    setError(null);
   }
 
   if (!unlocked) {
@@ -50,6 +66,8 @@ export function AdminAccessGate({ children }: AdminAccessGateProps) {
           </p>
           <input
             type="password"
+            name="admin-code"
+            autoComplete="current-password"
             value={code}
             onChange={(event) => setCode(event.target.value)}
             placeholder="Código de admin"
@@ -63,10 +81,7 @@ export function AdminAccessGate({ children }: AdminAccessGateProps) {
               {error}
             </p>
           ) : null}
-          <PrimaryButton
-            onClick={handleUnlock}
-            disabled={loading || code.trim().length < 4}
-          >
+          <PrimaryButton onClick={handleUnlock} disabled={enterDisabled}>
             {loading ? "Verificando..." : "Entrar"}
           </PrimaryButton>
           <p className="text-center text-xs text-white/50">
@@ -94,6 +109,11 @@ function ChangeAdminCodePanel({ onLogout }: { onLogout: () => void }) {
   const [loading, setLoading] = useState(false);
 
   async function handleChangeCode() {
+    if (currentCode.trim().length < 4 || newCode.trim().length < 4) {
+      setMessage("Cada código debe tener al menos 4 caracteres");
+      return;
+    }
+
     if (newCode !== confirmCode) {
       setMessage("Los códigos nuevos no coinciden");
       return;
@@ -173,15 +193,7 @@ function ChangeAdminCodePanel({ onLogout }: { onLogout: () => void }) {
           </p>
         ) : null}
         <div className="flex gap-2">
-          <PrimaryButton
-            onClick={handleChangeCode}
-            disabled={
-              loading ||
-              currentCode.length < 4 ||
-              newCode.length < 4 ||
-              confirmCode.length < 4
-            }
-          >
+          <PrimaryButton onClick={handleChangeCode} disabled={loading}>
             {loading ? "Guardando..." : "Guardar"}
           </PrimaryButton>
           <button

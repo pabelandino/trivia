@@ -74,3 +74,29 @@ export function isParticipantOnline(participant: Participant): boolean {
 export function countCorrectAnswers(answers: Answer[]): number {
   return answers.filter((answer) => answer.is_correct).length;
 }
+
+export function findParticipantAnswer(
+  answers: Answer[],
+  participantId: string,
+  questionId: string
+): Answer | null {
+  return (
+    answers.find(
+      (answer) =>
+        answer.participant_id === participantId &&
+        answer.question_id === questionId
+    ) ?? null
+  );
+}
+
+export function isAnswerCorrect(
+  answer: Answer,
+  question: Question,
+  phase: Game["phase"]
+): boolean {
+  if (phase === "reveal" || phase === "finished") {
+    return answer.selected_index === question.correct_index;
+  }
+
+  return answer.is_correct;
+}

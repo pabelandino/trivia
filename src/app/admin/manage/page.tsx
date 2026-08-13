@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { AnswerOptions } from "@/components/AnswerOptions";
 import { CountdownTimer } from "@/components/CountdownTimer";
 import { Leaderboard } from "@/components/Leaderboard";
@@ -13,7 +13,7 @@ import {
   SecondaryButton,
 } from "@/components/ui";
 import { useGameById } from "@/hooks/useGameRealtime";
-import { saveAdminSession, updateAdminSessionTitle } from "@/lib/admin-storage";
+import { saveAdminSession, getAdminSecretForGame, updateAdminSessionTitle } from "@/lib/admin-storage";
 import {
   countCorrectAnswers,
   getQuestionTimerSeconds,
@@ -40,8 +40,16 @@ const emptyQuestion: CreateQuestionInput = {
 function AdminManageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const clientReady = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
   const gameId = searchParams.get("gameId") ?? "";
-  const adminSecret = searchParams.get("secret") ?? "";
+  const secretFromUrl = searchParams.get("secret") ?? "";
+  const secretFromStorage = clientReady ? getAdminSecretForGame(gameId) : null;
+  const adminSecret = secretFromUrl || secretFromStorage || "";
+
   const [draft, setDraft] = useState<CreateQuestionInput>(emptyQuestion);
   const [actionLoading, setActionLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -55,6 +63,21 @@ function AdminManageContent() {
   const editTitle = titleDraft ?? state?.game.title ?? "";
   const editTimer = timerDraft ?? state?.game.default_timer_seconds ?? 30;
   const shareUrl = state?.game.code ? getShareUrl(state.game.code) : "";
+
+  useEffect(() => {
+    if (!gameId) {
+      router.replace("/admin");
+      return;
+    }
+
+    if (secretFromUrl || !secretFromStorage) return;
+
+    const params = new URLSearchParams({
+      gameId,
+      secret: secretFromStorage,
+    });
+    router.replace(`/admin/manage?${params.toString()}`);
+  }, [gameId, router, secretFromStorage, secretFromUrl]);
 
   useEffect(() => {
     if (!state || !adminSecret) return;
@@ -209,18 +232,33 @@ function AdminManageContent() {
     }
   }
 
+  if (!gameId) {
+    return (
+      <AppShell>
+        <Card>Cargando...</Card>
+      </AppShell>
+    );
+  }
+
+  if (!clientReady && !secretFromUrl) {
+    return (
+      <AppShell>
+        <Card>Cargando...</Card>
+      </AppShell>
+    );
+  }
+
   if (!adminSecret) {
     return (
       <AppShell>
-        <Card>
+        <Card className="space-y-4">
           <p className="font-semibold text-white">
-            Falta el token de admin. Crea una nueva trivia desde el panel.
+            No encontramos el token de esta trivia en este dispositivo. Ábrela
+            desde el panel o crea una nueva.
           </p>
-          <div className="mt-4">
-            <PrimaryButton onClick={() => router.push("/admin")}>
-              Ir al panel admin
-            </PrimaryButton>
-          </div>
+          <PrimaryButton onClick={() => router.push("/admin")}>
+            Ir al panel admin
+          </PrimaryButton>
         </Card>
       </AppShell>
     );

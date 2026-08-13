@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AnswerOptions } from "@/components/AnswerOptions";
 import { CountdownTimer } from "@/components/CountdownTimer";
@@ -18,9 +18,13 @@ import {
   participantHeartbeat,
   submitAnswer as submitAnswerRpc,
 } from "@/lib/game-service";
-import { getQuestionTimerSeconds } from "@/lib/game-utils";
+import {
+  findParticipantAnswer,
+  getQuestionTimerSeconds,
+  isAnswerCorrect,
+} from "@/lib/game-utils";
 import { getWinners } from "@/lib/winner-utils";
-import type { Answer, Participant } from "@/lib/types";
+import type { Participant } from "@/lib/types";
 
 const SESSION_PREFIX = "trivia_player_";
 
@@ -52,11 +56,10 @@ function PlayPageContent() {
     questionId: string;
     index: number;
   } | null>(null);
-  const [submittedAnswer, setSubmittedAnswer] = useState<Answer | null>(null);
+  const [confirmedRoundKey, setConfirmedRoundKey] = useState<string | null>(null);
   const [joinLoading, setJoinLoading] = useState(false);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const submitLockRef = useRef(false);
 
   const storedSession =
     code && typeof window !== "undefined" ? getStoredSession(code) : null;
@@ -86,6 +89,10 @@ function PlayPageContent() {
   );
 
   const currentQuestion = state?.currentQuestion ?? null;
+  const questionRoundKey =
+    currentQuestion && state?.game.phase === "question" && state.game.question_started_at
+      ? `${currentQuestion.id}:${state.game.question_started_at}`
+      : null;
   const timerSeconds = state && currentQuestion
     ? getQuestionTimerSeconds(currentQuestion, {
         ...state.game,
@@ -93,25 +100,29 @@ function PlayPageContent() {
       })
     : 30;
 
-  const serverAnswer = useMemo(() => {
+  const myAnswer = useMemo(() => {
     if (!state || !session || !currentQuestion) return null;
 
-    return (
-      state.answersForCurrentQuestion.find(
-        (answer) => answer.participant_id === session.participantId
-      ) ?? null
+    return findParticipantAnswer(
+      state.answersForCurrentQuestion,
+      session.participantId,
+      currentQuestion.id
     );
   }, [currentQuestion, session, state]);
 
-  const myAnswer =
-    (submittedAnswer?.question_id === currentQuestion?.id
-      ? submittedAnswer
-      : null) ?? serverAnswer;
+  const hasSubmittedThisRound =
+    Boolean(myAnswer) || confirmedRoundKey === questionRoundKey;
+
   const selectedIndex =
     myAnswer?.selected_index ??
     (pendingSelection && pendingSelection.questionId === currentQuestion?.id
       ? pendingSelection.index
       : null);
+
+  const answerWasCorrect =
+    myAnswer && currentQuestion && state
+      ? isAnswerCorrect(myAnswer, currentQuestion, state.game.phase)
+      : false;
 
   useEffect(() => {
     if (!state) return;
@@ -163,25 +174,33 @@ function PlayPageContent() {
   }
 
   async function submitAnswer() {
-    if (!state || !session || selectedIndex === null || myAnswer) return;
-    if (submitLockRef.current) return;
+    if (
+      !state ||
+      !session ||
+      !currentQuestion ||
+      !questionRoundKey ||
+      selectedIndex === null ||
+      hasSubmittedThisRound ||
+      submitLoading
+    ) {
+      return;
+    }
 
-    submitLockRef.current = true;
     setSubmitLoading(true);
     setError(null);
 
     try {
-      const data = await submitAnswerRpc(
+      await submitAnswerRpc(
         state.game.id,
         session.participantId,
         session.sessionToken,
         selectedIndex
       );
 
-      setSubmittedAnswer(data.answer as Answer);
-      await refresh();
+      setConfirmedRoundKey(questionRoundKey);
+      setPendingSelection(null);
+      void refresh();
     } catch (submitError) {
-      submitLockRef.current = false;
       setError(
         submitError instanceof Error
           ? submitError.message
@@ -293,16 +312,17 @@ function PlayPageContent() {
           </h2>
 
           <AnswerOptions
+            key={questionRoundKey ?? currentQuestion.id}
             options={currentQuestion.options}
             selectedIndex={selectedIndex}
-            disabled={Boolean(myAnswer) || submitLoading}
+            disabled={hasSubmittedThisRound || submitLoading}
             onSelect={(index) => {
-              if (!currentQuestion) return;
+              if (hasSubmittedThisRound || submitLoading) return;
               setPendingSelection({ questionId: currentQuestion.id, index });
             }}
           />
 
-          {!myAnswer ? (
+          {!hasSubmittedThisRound ? (
             <PrimaryButton
               onClick={submitAnswer}
               disabled={selectedIndex === null || submitLoading}
@@ -337,7 +357,7 @@ function PlayPageContent() {
           />
 
           <p className="text-center text-lg font-extrabold">
-            {myAnswer?.is_correct
+            {answerWasCorrect
               ? "¡Correcto! +1 punto"
               : myAnswer
                 ? "Esta vez no fue..."

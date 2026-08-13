@@ -45,3 +45,12 @@ export function updateAdminSessionTitle(gameId: string, title: string) {
   );
   localStorage.setItem(ADMIN_STORAGE_KEY, JSON.stringify(sessions));
 }
+
+export function getAdminSecretForGame(gameId: string): string | null {
+  if (!gameId) return null;
+
+  return (
+    getAdminSessions().find((session) => session.gameId === gameId)?.adminSecret ??
+    null
+  );
+}

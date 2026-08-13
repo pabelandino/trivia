@@ -12,6 +12,7 @@ import {
 } from "@/components/ui";
 import {
   getAdminSessions,
+  getAdminSecretForGame,
   removeAdminSession,
   saveAdminSession,
   type AdminSession,
@@ -143,8 +144,11 @@ export default function AdminDashboardPage() {
   }
 
   function openGame(gameId: string) {
-    const secret = getSecret(gameId);
-    if (!secret) return;
+    const secret = getSecret(gameId) || getAdminSecretForGame(gameId);
+    if (!secret) {
+      setError("No se encontró el token de esta trivia. Créala de nuevo desde el panel.");
+      return;
+    }
     router.push(
       `/admin/manage?gameId=${encodeURIComponent(gameId)}&secret=${encodeURIComponent(secret)}`
     );
